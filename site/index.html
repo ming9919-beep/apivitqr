@@ -19,6 +19,7 @@
     .error{display:none;border-radius:10px;background:#fff0ef;color:#a32e2a;padding:12px 14px;margin-top:16px;font-size:14px}.result{display:none}
     .bank{display:flex;align-items:center;gap:14px;min-height:64px}.bank img{object-fit:contain;width:56px;height:56px;border:1px solid #eef0f4;border-radius:12px;padding:5px}.bank-name{font-weight:750;font-size:18px}.bank-meta{font-size:13px;color:#747f91;margin-top:4px}
     .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0}.item{border:1px solid #edf0f5;border-radius:11px;padding:12px;min-width:0}.label{font-size:12px;color:#8490a2;margin-bottom:6px}.value{font-size:14px;font-weight:650;overflow-wrap:anywhere}.muted{color:#8c96a5;font-weight:450}
+    .api-setting{margin-top:17px}.api-setting label{display:block;font-size:13px;font-weight:650;color:#556176}.api-setting input{display:block;width:100%;margin-top:7px;border:1px solid #d9deea;border-radius:9px;padding:10px 11px;font:inherit}.api-setting .hint{line-height:1.5}
     details{margin-top:15px}summary{cursor:pointer;color:#52617b;font-size:14px;font-weight:650;padding:8px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f8fb;padding:14px;border-radius:10px;font-size:12px;line-height:1.55;max-height:420px;overflow:auto}
     .notice{font-size:12px;color:#8791a2;line-height:1.55;margin:20px 2px 0}.footer{text-align:center;color:#9aa3b1;font-size:12px;margin-top:22px}
     @media(max-width:560px){main{margin:28px auto 50px}.card{padding:18px}.grid{grid-template-columns:1fr}.tabs{flex-wrap:wrap}}
@@ -41,12 +42,17 @@
         <strong>选择一张清晰的二维码图片</strong>
         <p>支持 PNG、JPG 等常见图片格式</p>
         <input id="file" type="file" accept="image/*" aria-label="选择二维码图片">
-        <div class="hint">图片只在当前浏览器处理，不会上传到服务器。</div>
+        <div class="hint">图片本身不会上传；若填写账号查询服务，二维码文字数据会发送到该 API 查询户名。</div>
       </div>
     </div>
     <div class="panel" id="textPanel" hidden>
       <textarea id="payload" placeholder="在这里粘贴 VietQR 原始字符串，例如 000201..." aria-label="二维码原始内容"></textarea>
       <button id="parseButton" class="primary" type="button">解析内容</button>
+    </div>
+    <div class="api-setting">
+      <label for="apiBase">账号名称查询服务地址（可选）</label>
+      <input id="apiBase" type="url" placeholder="https://your-api.example.com" autocomplete="url">
+      <div class="hint">二维码没有姓名字段时，可连接你部署的 API 查询账户名。VietQR 密钥只需配置在服务器环境变量中，不要填在这里。</div>
     </div>
     <div id="error" class="error" role="alert"></div>
   </section>
@@ -57,6 +63,7 @@
       <div><div class="bank-name" id="bankName">识别完成</div><div class="bank-meta" id="bankMeta"></div></div>
     </div>
     <div class="grid" id="summary"></div>
+    <div class="hint" id="lookupHint"></div>
     <details><summary>查看二维码全部解析数据</summary><pre id="json"></pre></details>
   </section>
   <p class="notice">请在转账前核对银行 App 中显示的收款人和账号。二维码字段本身不等同于银行身份认证；CRC 是完整性校验值，不是密钥。</p>
@@ -68,6 +75,8 @@
   const imageTab = $('imageTab'), textTab = $('textTab'), imagePanel = $('imagePanel'), textPanel = $('textPanel');
   const errorBox = $('error'), result = $('result');
   let banksPromise;
+  $('apiBase').value = localStorage.getItem('apivitqr-api-base') || '';
+  $('apiBase').addEventListener('change', () => localStorage.setItem('apivitqr-api-base', $('apiBase').value.trim()));
 
   function showError(message) { errorBox.textContent = message; errorBox.style.display = 'block'; result.style.display = 'none'; }
   function clearError() { errorBox.textContent = ''; errorBox.style.display = 'none'; }
@@ -135,14 +144,29 @@
         crc: crcField ? {value: crcField.value, valid: crcValid} : null,
         fields: expand(fields), raw_payload: raw
       };
+      let lookupStatus = 'not_configured';
+      const apiBase = $('apiBase').value.trim().replace(/\/+$/, '');
+      if (!data.recipient_name && apiBase) {
+        try {
+          const response = await fetch(`${apiBase}/api/v1/parse`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({payload:raw})});
+          if (!response.ok) throw new Error();
+          const remote = await response.json();
+          if (remote.recipient_name) Object.assign(data, remote);
+          lookupStatus = remote.recipient_name_lookup?.status || (remote.recipient_name ? 'resolved' : 'not_found');
+        } catch { lookupStatus = 'unavailable'; }
+      }
       $('bankName').textContent = data.bank?.name || (bankBin ? `未识别银行 (${bankBin})` : '二维码已解析');
       $('bankMeta').textContent = [data.bank?.legal_name, bankBin ? `BIN ${bankBin}` : null].filter(Boolean).join(' · ');
       $('bankLogo').hidden = !data.bank?.logo; if (data.bank?.logo) $('bankLogo').src = data.bank.logo;
+      $('lookupHint').textContent = data.recipient_name
+        ? (data.recipient_name_source === 'vietqr_account_lookup' ? '姓名来自 VietQR 账户查询。付款前请在银行 App 再核对。' : '姓名来自二维码字段。付款前请在银行 App 再核对。')
+        : lookupStatus === 'unavailable' ? '账号查询服务无法访问；请确认服务地址、跨域设置和运行状态。'
+        : '二维码中没有姓名字段。请部署账户查询 API，并在服务器环境变量中配置 VietQR Client ID 和 API Key。';
       const values = [
         ['收款人姓名', data.recipient_name], ['银行账号', account], ['金额', data.amount ? `${data.amount} ${data.currency === '704' ? 'VND' : ''}`.trim() : null],
         ['转账类型', service], ['国家/地区', data.country], ['CRC 校验', data.crc ? (data.crc.valid ? `有效 · ${data.crc.value}` : `不匹配 · ${data.crc.value}`) : null]
       ];
-      $('summary').replaceChildren(...values.map(([label, value]) => { const box=document.createElement('div');box.className='item';const l=document.createElement('div');l.className='label';l.textContent=label;const v=document.createElement('div');v.className='value'+(!value?' muted':'');v.textContent=value || '二维码未提供';box.append(l,v);return box; }));
+      $('summary').replaceChildren(...values.map(([label, value]) => { const box=document.createElement('div');box.className='item';const l=document.createElement('div');l.className='label';l.textContent=label;const v=document.createElement('div');v.className='value'+(!value?' muted':'');v.textContent=value || (label === '收款人姓名' ? '二维码未包含姓名' : '二维码未提供');box.append(l,v);return box; }));
       $('json').textContent = JSON.stringify(data, null, 2); result.style.display = 'block';
     } catch (e) { showError(e.message || '无法解析二维码内容。'); }
   }

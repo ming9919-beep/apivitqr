@@ -8,12 +8,19 @@ import cv2
 import httpx
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="VietQR Reader API",
     description="Decode VietQR payloads and QR images into EMV TLV fields.",
     version="1.0.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ALLOWED_ORIGINS", "https://ming9919-beep.github.io").split(","),
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 BANKS_URL = os.getenv("VIETQR_BANKS_URL", "https://api.vietqr.io/v2/banks")
@@ -23,6 +30,11 @@ MAX_PAYLOAD_CHARS = 8192
 
 class PayloadRequest(BaseModel):
     payload: str = Field(min_length=1, max_length=MAX_PAYLOAD_CHARS)
+
+
+class AccountLookupRequest(BaseModel):
+    bank_bin: str = Field(pattern=r"^\d{6}$")
+    account_number: str = Field(min_length=4, max_length=25)
 
 
 def _parse_tlv(payload: str) -> list[dict[str, Any]]:
@@ -140,6 +152,47 @@ def _decode(payload: str) -> dict[str, Any]:
     return _extract(fields, payload.strip())
 
 
+async def _lookup_account_name(bank_bin: str, account_number: str) -> str:
+    client_id = os.getenv("VIETQR_CLIENT_ID")
+    api_key = os.getenv("VIETQR_API_KEY")
+    if not client_id or not api_key:
+        raise HTTPException(status_code=503, detail="Account-name lookup is not configured on this server")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://api.vietqr.io/v2/lookup",
+                headers={"x-client-id": client_id, "x-api-key": api_key},
+                json={"bin": int(bank_bin), "accountNumber": account_number},
+            )
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="VietQR account-name lookup failed") from exc
+    account_name = (result.get("data") or {}).get("accountName")
+    if result.get("code") != "00" or not account_name:
+        raise HTTPException(status_code=422, detail=result.get("desc") or "Account name was not returned")
+    return str(account_name)
+
+
+async def _enrich_account_name(result: dict[str, Any]) -> dict[str, Any]:
+    if result.get("recipient_name"):
+        result["recipient_name_lookup"] = {"status": "qr_field"}
+        return result
+    if not result.get("bank_bin") or not result.get("account_number"):
+        result["recipient_name_lookup"] = {"status": "missing_bank_or_account"}
+        return result
+    if not os.getenv("VIETQR_CLIENT_ID") or not os.getenv("VIETQR_API_KEY"):
+        result["recipient_name_lookup"] = {"status": "not_configured"}
+        return result
+    try:
+        result["recipient_name"] = await _lookup_account_name(result["bank_bin"], result["account_number"])
+        result["recipient_name_source"] = "vietqr_account_lookup"
+        result["recipient_name_lookup"] = {"status": "resolved"}
+    except HTTPException as exc:
+        result["recipient_name_lookup"] = {"status": "failed", "detail": exc.detail}
+    return result
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -151,8 +204,14 @@ def banks() -> list[dict[str, Any]]:
 
 
 @app.post("/api/v1/parse")
-def parse_payload(request: PayloadRequest) -> dict[str, Any]:
-    return _decode(request.payload)
+async def parse_payload(request: PayloadRequest) -> dict[str, Any]:
+    return await _enrich_account_name(_decode(request.payload))
+
+
+@app.post("/api/v1/lookup-account")
+async def lookup_account(request: AccountLookupRequest) -> dict[str, str]:
+    name = await _lookup_account_name(request.bank_bin, request.account_number)
+    return {"recipient_name": name, "recipient_name_source": "vietqr_account_lookup"}
 
 
 @app.post("/api/v1/parse-image")
@@ -168,4 +227,4 @@ async def parse_image(image: UploadFile = File(...)) -> dict[str, Any]:
     value, points, _ = cv2.QRCodeDetector().detectAndDecode(decoded)
     if not value:
         raise HTTPException(status_code=422, detail="No readable QR code found")
-    return _decode(value)
+    return await _enrich_account_name(_decode(value))

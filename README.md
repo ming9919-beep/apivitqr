@@ -8,6 +8,14 @@ After GitHub Pages finishes its deployment, open <https://ming9919-beep.github.i
 
 GitHub Pages hosts static files only. The FastAPI service below still needs a Python host (or can be run locally); Pages does not run the FastAPI API endpoints.
 
+### Show the beneficiary account name
+
+A transfer QR often contains the bank and account number but no account-holder name. The API can look up the name through VietQR when the server has `VIETQR_CLIENT_ID` and `VIETQR_API_KEY` configured. Get these credentials from <https://my.vietqr.io>; keep them only in the API host's environment settings, never in the Pages source or browser.
+
+`POST /api/v1/parse` automatically looks up the name when the QR has a bank BIN and account number and the server credentials are configured. `POST /api/v1/lookup-account` accepts `{ "bank_bin": "970415", "account_number": "113366668888" }`. The Pages screen has an optional API base URL field; enter the deployed API origin there to use account-name lookup. The API enables CORS for the Pages origin by default. Set `CORS_ALLOWED_ORIGINS` to a comma-separated origin list if needed.
+
+For local development, set `VIETQR_CLIENT_ID` and `VIETQR_API_KEY` in the shell before starting Uvicorn. Do not commit real credential values to the repository.
+
 一个读取越南 VietQR 的 HTTP 服务，可接收二维码图片或二维码原始字符串，返回解析后的完整 TLV 字段、银行 BIN/账户、银行名称与 logo、金额以及 CRC 校验状态。
 
 ## 启动
