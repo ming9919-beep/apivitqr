@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7fb">
+  <title>VietQR Reader · apivitqr</title>
+  <style>
+    :root{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#19212f;background:#f6f7fb;font-synthesis:none;text-rendering:optimizeLegibility}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% -20%,#e0eaff 0,transparent 55%),#f6f7fb}
+    main{width:min(920px,calc(100% - 32px));margin:46px auto 70px}.eyebrow{font-size:12px;font-weight:700;letter-spacing:.12em;color:#5268b3;text-transform:uppercase}
+    h1{font-size:clamp(30px,5vw,44px);letter-spacing:-.04em;margin:10px 0 8px}.intro{color:#647084;line-height:1.6;margin:0 0 25px}
+    .card{background:#fff;border:1px solid #e6e9f0;border-radius:18px;padding:24px;box-shadow:0 12px 36px #2534510a;margin-top:16px}
+    .tabs{display:flex;gap:8px;margin-bottom:18px}.tab{border:0;border-radius:9px;padding:10px 14px;background:#f1f3f8;color:#596579;font-weight:650;cursor:pointer}.tab.active{background:#e9edff;color:#394fa7}
+    .panel[hidden]{display:none}.drop{border:1.5px dashed #cdd4e1;border-radius:14px;text-align:center;padding:30px 16px;background:#fbfcff}.drop strong{display:block;margin-bottom:8px}.drop p{color:#748095;font-size:14px;margin:0 0 15px}
+    input[type=file]{max-width:100%;font:inherit;color:#626d80}.hint{font-size:12px;color:#8791a2;margin-top:12px}
+    textarea{width:100%;min-height:104px;resize:vertical;border:1px solid #d9deea;border-radius:11px;padding:12px;font:13px/1.55 ui-monospace,Consolas,monospace;color:#2a3344}
+    button.primary{border:0;border-radius:10px;padding:11px 17px;background:#435bc1;color:#fff;font-weight:700;cursor:pointer;margin-top:12px}button.primary:hover{background:#3349aa}
+    .error{display:none;border-radius:10px;background:#fff0ef;color:#a32e2a;padding:12px 14px;margin-top:16px;font-size:14px}.result{display:none}
+    .bank{display:flex;align-items:center;gap:14px;min-height:64px}.bank img{object-fit:contain;width:56px;height:56px;border:1px solid #eef0f4;border-radius:12px;padding:5px}.bank-name{font-weight:750;font-size:18px}.bank-meta{font-size:13px;color:#747f91;margin-top:4px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0}.item{border:1px solid #edf0f5;border-radius:11px;padding:12px;min-width:0}.label{font-size:12px;color:#8490a2;margin-bottom:6px}.value{font-size:14px;font-weight:650;overflow-wrap:anywhere}.muted{color:#8c96a5;font-weight:450}
+    details{margin-top:15px}summary{cursor:pointer;color:#52617b;font-size:14px;font-weight:650;padding:8px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f8fb;padding:14px;border-radius:10px;font-size:12px;line-height:1.55;max-height:420px;overflow:auto}
+    .notice{font-size:12px;color:#8791a2;line-height:1.55;margin:20px 2px 0}.footer{text-align:center;color:#9aa3b1;font-size:12px;margin-top:22px}
+    @media(max-width:560px){main{margin:28px auto 50px}.card{padding:18px}.grid{grid-template-columns:1fr}.tabs{flex-wrap:wrap}}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js" defer></script>
+</head>
+<body>
+<main>
+  <div class="eyebrow">apivitqr · VietQR utility</div>
+  <h1>读取 VietQR 二维码</h1>
+  <p class="intro">上传二维码图片，或粘贴二维码原始内容。页面会显示识别到的银行、账号、金额及完整字段。</p>
+
+  <section class="card">
+    <div class="tabs" role="tablist">
+      <button class="tab active" id="imageTab" type="button" role="tab" aria-selected="true">上传二维码图片</button>
+      <button class="tab" id="textTab" type="button" role="tab" aria-selected="false">粘贴二维码内容</button>
+    </div>
+    <div class="panel" id="imagePanel">
+      <div class="drop">
+        <strong>选择一张清晰的二维码图片</strong>
+        <p>支持 PNG、JPG 等常见图片格式</p>
+        <input id="file" type="file" accept="image/*" aria-label="选择二维码图片">
+        <div class="hint">图片只在当前浏览器处理，不会上传到服务器。</div>
+      </div>
+    </div>
+    <div class="panel" id="textPanel" hidden>
+      <textarea id="payload" placeholder="在这里粘贴 VietQR 原始字符串，例如 000201..." aria-label="二维码原始内容"></textarea>
+      <button id="parseButton" class="primary" type="button">解析内容</button>
+    </div>
+    <div id="error" class="error" role="alert"></div>
+  </section>
+
+  <section id="result" class="card result" aria-live="polite">
+    <div class="bank">
+      <img id="bankLogo" alt="银行 logo" hidden>
+      <div><div class="bank-name" id="bankName">识别完成</div><div class="bank-meta" id="bankMeta"></div></div>
+    </div>
+    <div class="grid" id="summary"></div>
+    <details><summary>查看二维码全部解析数据</summary><pre id="json"></pre></details>
+  </section>
+  <p class="notice">请在转账前核对银行 App 中显示的收款人和账号。二维码字段本身不等同于银行身份认证；CRC 是完整性校验值，不是密钥。</p>
+  <div class="footer">apivitqr · 在浏览器本地解析</div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const imageTab = $('imageTab'), textTab = $('textTab'), imagePanel = $('imagePanel'), textPanel = $('textPanel');
+  const errorBox = $('error'), result = $('result');
+  let banksPromise;
+
+  function showError(message) { errorBox.textContent = message; errorBox.style.display = 'block'; result.style.display = 'none'; }
+  function clearError() { errorBox.textContent = ''; errorBox.style.display = 'none'; }
+  function tab(isText) {
+    imageTab.classList.toggle('active', !isText); textTab.classList.toggle('active', isText);
+    imageTab.setAttribute('aria-selected', String(!isText)); textTab.setAttribute('aria-selected', String(isText));
+    imagePanel.hidden = isText; textPanel.hidden = !isText; clearError();
+  }
+  imageTab.addEventListener('click', () => tab(false)); textTab.addEventListener('click', () => tab(true));
+
+  function parseTlv(value) {
+    const fields = []; let i = 0;
+    while (i < value.length) {
+      if (i + 4 > value.length) throw new Error(`字段 ${value.slice(i, i + 2) || '?'} 的 TLV 标头不完整`);
+      const tag = value.slice(i, i + 2), lenText = value.slice(i + 2, i + 4);
+      if (!/^\d{2}$/.test(tag) || !/^\d{2}$/.test(lenText)) throw new Error(`位置 ${i} 的 TLV 标头无效`);
+      const length = Number(lenText), start = i + 4, end = start + length;
+      if (end > value.length) throw new Error(`字段 ${tag} 声明长度超出二维码内容`);
+      fields.push({tag, length, value: value.slice(start, end)}); i = end;
+    }
+    return fields;
+  }
+  const nestedTag = (tag) => (Number(tag) >= 26 && Number(tag) <= 51) || ['62','64'].includes(tag);
+  function expand(fields) {
+    return fields.map((field) => {
+      if (!nestedTag(field.tag)) return field;
+      try { return {...field, subfields: parseTlv(field.value)}; } catch { return {...field, subfields: []}; }
+    });
+  }
+  function crc16(text) {
+    let crc = 0xffff;
+    for (const byte of new TextEncoder().encode(text)) {
+      crc ^= byte << 8;
+      for (let i = 0; i < 8; i++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+    return crc.toString(16).toUpperCase().padStart(4, '0');
+  }
+  async function bankCatalog() {
+    if (!banksPromise) banksPromise = fetch('https://api.vietqr.io/v2/banks').then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(d => d.data || []).catch(() => []);
+    return banksPromise;
+  }
+  async function render(raw) {
+    clearError(); raw = raw.trim();
+    try {
+      const fields = parseTlv(raw), top = Object.fromEntries(fields.map(f => [f.tag, f.value]));
+      let bankBin = null, account = null, service = null, template = null;
+      for (const f of fields) {
+        if (Number(f.tag) < 26 || Number(f.tag) > 51) continue;
+        let sub; try { sub = Object.fromEntries(parseTlv(f.value).map(x => [x.tag, x.value])); } catch { continue; }
+        if (sub['00'] !== 'A000000727') continue;
+        template = {tag:f.tag, subfields:expand(parseTlv(f.value))};
+        try { const recipient = Object.fromEntries(parseTlv(sub['01'] || '').map(x => [x.tag, x.value])); bankBin = recipient['00'] || null; account = recipient['01'] || null; } catch {}
+        service = sub['02'] || null; break;
+      }
+      const catalog = await bankCatalog(), bank = catalog.find(b => String(b.bin) === String(bankBin));
+      const crcField = fields.find(f => f.tag === '63'), crcValid = Boolean(crcField && raw.endsWith('6304' + crcField.value) && crc16(raw.slice(0, -4)) === crcField.value.toUpperCase());
+      const data = {
+        format: template ? 'VietQR/NAPAS' : 'EMVCo-compatible QR',
+        recipient_name: top['59'] || null,
+        recipient_name_source: top['59'] ? 'tag_59' : null,
+        account_number: account, bank_bin: bankBin,
+        bank: bankBin ? {name: bank?.shortName || bank?.short_name || bank?.name || null, legal_name: bank?.name || null, code: bank?.code || null, logo: bank?.logo || null} : null,
+        service_code: service, amount: top['54'] || null, currency: top['53'] || null,
+        country: top['58'] || null, merchant_city: top['60'] || null,
+        crc: crcField ? {value: crcField.value, valid: crcValid} : null,
+        fields: expand(fields), raw_payload: raw
+      };
+      $('bankName').textContent = data.bank?.name || (bankBin ? `未识别银行 (${bankBin})` : '二维码已解析');
+      $('bankMeta').textContent = [data.bank?.legal_name, bankBin ? `BIN ${bankBin}` : null].filter(Boolean).join(' · ');
+      $('bankLogo').hidden = !data.bank?.logo; if (data.bank?.logo) $('bankLogo').src = data.bank.logo;
+      const values = [
+        ['收款人姓名', data.recipient_name], ['银行账号', account], ['金额', data.amount ? `${data.amount} ${data.currency === '704' ? 'VND' : ''}`.trim() : null],
+        ['转账类型', service], ['国家/地区', data.country], ['CRC 校验', data.crc ? (data.crc.valid ? `有效 · ${data.crc.value}` : `不匹配 · ${data.crc.value}`) : null]
+      ];
+      $('summary').replaceChildren(...values.map(([label, value]) => { const box=document.createElement('div');box.className='item';const l=document.createElement('div');l.className='label';l.textContent=label;const v=document.createElement('div');v.className='value'+(!value?' muted':'');v.textContent=value || '二维码未提供';box.append(l,v);return box; }));
+      $('json').textContent = JSON.stringify(data, null, 2); result.style.display = 'block';
+    } catch (e) { showError(e.message || '无法解析二维码内容。'); }
+  }
+  $('parseButton').addEventListener('click', () => render($('payload').value));
+  $('file').addEventListener('change', async (event) => {
+    const file = event.target.files?.[0]; if (!file) return; clearError();
+    if (!window.jsQR) { showError('二维码识别组件尚未加载，请检查网络后刷新页面。'); return; }
+    try {
+      const bitmap = await createImageBitmap(file), canvas = document.createElement('canvas');
+      canvas.width = bitmap.width; canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d', {willReadFrequently:true}); ctx.drawImage(bitmap, 0, 0);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(pixels.data, pixels.width, pixels.height, {inversionAttempts:'attemptBoth'});
+      if (!code) throw new Error('没有识别到二维码，请换一张更清晰的图片。');
+      $('payload').value = code.data; await render(code.data);
+    } catch (e) { showError(e.message || '无法读取图片。'); }
+  });
+})();
+</script>
+</body>
+</html>

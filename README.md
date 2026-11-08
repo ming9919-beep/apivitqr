@@ -1,6 +1,12 @@
 # apivitqr
 
-VietQR Reader API service.
+VietQR Reader API service and browser based QR reader.
+
+## Public web page
+
+After GitHub Pages finishes its deployment, open <https://ming9919-beep.github.io/apivitqr/>. The static page reads QR images in the browser and parses the VietQR payload. It does not send the QR image to this server.
+
+GitHub Pages hosts static files only. The FastAPI service below still needs a Python host (or can be run locally); Pages does not run the FastAPI API endpoints.
 
 一个读取越南 VietQR 的 HTTP 服务，可接收二维码图片或二维码原始字符串，返回解析后的完整 TLV 字段、银行 BIN/账户、银行名称与 logo、金额以及 CRC 校验状态。
 
